@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Боевой бот (Live Trading)
+  live-bot:
+    build: .
+    container_name: trading_live_bot
+    restart: unless-stopped
+    command: python live.py
+    env_file:
+      - .env
+    volumes:
+      # Прокидываем базу данных и модели наружу, чтобы они не удалились при обновлении контейнера
+      - ./market_data.db:/app/market_data.db
+      - ./models:/app/models
+    # Если бот должен логировать в файл:
+    #   - ./logs:/app/logs
+
+  # Демонстрационный бот (Paper Trading)
+  # По умолчанию выключен. Для запуска: docker-compose up -d paper-bot
+  paper-bot:
+    build: .
+    container_name: trading_paper_bot
+    restart: unless-stopped
+    command: python paper.py
+    env_file:
+      - .env
+    volumes:
+      - ./market_data.db:/app/market_data.db
+      - ./models:/app/models
+    profiles:
+      - dev
+
+  # ETL Пайплайн (Скачивание данных)
+  # Для ручного запуска: docker-compose run --rm etl
+  etl:
+    build: .
+    container_name: trading_etl
+    command: python etl.py
+    env_file:
+      - .env
+    volumes:
+      - ./market_data.db:/app/market_data.db
+    profiles:
+      - tools

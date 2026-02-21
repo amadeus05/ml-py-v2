@@ -1,0 +1,5 @@
+storage/
+*.pkl
+*.db
+*.log
+.env
