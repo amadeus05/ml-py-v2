@@ -13,6 +13,7 @@ import pandas as pd
 
 from trading_engine.core.domain.models import TradeResult
 from trading_engine.core.domain.portfolio import Portfolio
+from trading_engine.core.domain.enums import Side
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,20 @@ class BacktestReporter:
         )
         print(f"\nКонечный баланс: {portfolio.balance:.2f}")
         print(f"Макс. просадка:  {portfolio.max_drawdown:.2f}%")
+
+        total_longs = sum(1 for t in self.trades if t.side == Side.LONG)
+        total_shorts = sum(1 for t in self.trades if t.side == Side.SHORT)
+        longs_won = sum(1 for t in self.trades if t.side == Side.LONG and t.net_pnl_pct > 0)
+        longs_lost = sum(1 for t in self.trades if t.side == Side.LONG and t.net_pnl_pct <= 0)
+        shorts_won = sum(1 for t in self.trades if t.side == Side.SHORT and t.net_pnl_pct > 0)
+        shorts_lost = sum(1 for t in self.trades if t.side == Side.SHORT and t.net_pnl_pct <= 0)
+
+        print("\n" + "=" * 50)
+        print("СТАТИСТИКА ПО НАПРАВЛЕНИЯМ")
+        print("=" * 50)
+        print(f"LONG  Всего: {total_longs:<4} | В плюс: {longs_won:<4} | В минус: {longs_lost:<4}")
+        print(f"SHORT Всего: {total_shorts:<4} | В плюс: {shorts_won:<4} | В минус: {shorts_lost:<4}")
+        print("-" * 50)
 
         self._print_metrics(portfolio)
 
