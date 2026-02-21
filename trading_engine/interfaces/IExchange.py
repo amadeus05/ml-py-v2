@@ -37,6 +37,7 @@ class IExchange(ABC):
         quantity: float,
         price: float,
         order_type: str = "MARKET",
+        reduce_only: bool = False,
     ) -> dict:
         """
         Разместить ордер на бирже.
@@ -52,6 +53,34 @@ class IExchange(ABC):
         ...
 
     @abstractmethod
+    async def get_position_risk(self, symbols: Optional[list[str]] = None) -> list[dict]:
+        """
+        Получить позиции с биржи (например, Binance positionRisk).
+        Возвращает список словарей с полями: symbol, quantity, entry_price, leverage, mark_price.
+        """
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """Закрыть соединение."""
         ...
+
+    # @abstractmethod
+    # async def set_leverage(self, symbol: str, leverage: int) -> None:
+    #     """Установить кредитное плечо для символа."""
+    #     ...
+    
+    # @abstractmethod
+    # async def get_positions(self) -> int:
+    #     """Получить количество открытых позиций."""
+    #     ...
+    
+    # @abstractmethod
+    # async def get_funding_rate(self, symbol: str) -> float:
+    #     """Получить funding rate для символа."""
+    #     ...
+
+    # @abstractmethod
+    # async def get_ohlc_in_interval(self, symbol: str, start_time: int, end_time: int, limit: int) -> pd.DataFrame:
+    #     """Получить OHLCV свечи в интервале."""
+    #     ...

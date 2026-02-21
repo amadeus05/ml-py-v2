@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     LEVERAGE: int = 1
     RISK_PER_TRADE: float = 0.01
     MIN_NOTIONAL: float = 10.0
+    MAX_CONCURRENT_POSITIONS: int = 3  # Лимит одновременно открытых позиций по всем символам
+    MAX_DAILY_LOSS_PCT: float = 5.0    # Daily loss kill switch (в процентах от баланса)
+    MAX_DRAWDOWN_PCT: float = 20.0     # Максимальная просадка от peak balance
+
+    # --- RECONCILIATION ---
+    RECONCILE_ENABLED: bool = True
+    RECONCILE_INTERVAL_SEC: int = 60
+    RECONCILE_QTY_TOLERANCE: float = 1e-6
 
     # --- FEES (Binance Futures) ---
     TAKER_FEE: float = 0.0004
@@ -78,6 +86,8 @@ class Settings(BaseSettings):
     # --- API KEYS ---
     BINANCE_API_KEY: str = ""
     BINANCE_API_SECRET: str = ""
+    BYBIT_API_KEY: str = ""
+    BYBIT_API_SECRET: str = ""
 
     # --- TELEGRAM ---
     TG_API_KEY: str = ""

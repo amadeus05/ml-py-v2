@@ -23,15 +23,21 @@ class Position:
         margin: float,
         leverage: float,
         entry_time: Optional[datetime] = None,
+        quantity: Optional[float] = None,
     ):
         self.symbol = symbol
         self.entry_price = entry_price
         self.side = side
-        self.notional = notional
-        self.margin = margin
         self.leverage = leverage
         self.entry_time = entry_time or datetime.utcnow()
-        self.quantity = notional / entry_price
+        if quantity is not None:
+            self.quantity = quantity
+            self.notional = quantity * entry_price
+            self.margin = self.notional / leverage
+        else:
+            self.notional = notional
+            self.margin = margin
+            self.quantity = notional / entry_price
 
     def close(self, exit_price: float, taker_fee: float, slippage: float) -> dict:
         """

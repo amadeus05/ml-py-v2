@@ -129,7 +129,7 @@ class Container:
         if mode == "binance":
             return BinanceExchange(self.settings)
         elif mode == "bybit":
-            return BybitExchange()
+            return BybitExchange(self.settings)
         elif mode == "paper":
             binance = BinanceExchange(self.settings)
             return PaperExchange(self.settings, binance, initial_balance=initial_balance)

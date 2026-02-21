@@ -65,6 +65,7 @@ class SimulationExchange(IExchange):
         quantity: float,
         price: float,
         order_type: str = "MARKET",
+        reduce_only: bool = False,
     ) -> dict:
         """
         Симуляция fill.
@@ -103,6 +104,10 @@ class SimulationExchange(IExchange):
         Здесь возвращаем 0.0 (или можно кидать Exception, т.к. не должно вызываться напряму).
         """
         return 0.0
+
+    async def get_position_risk(self, symbols: Optional[list[str]] = None) -> list[dict]:
+        """Для симуляции нет биржи — возвращаем пустой список."""
+        return []
 
     async def close(self) -> None:
         pass

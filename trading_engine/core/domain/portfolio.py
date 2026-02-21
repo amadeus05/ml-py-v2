@@ -43,6 +43,16 @@ class Portfolio:
             self.used_margin = 0.0
         logger.debug(f"Margin released: {amount:.2f}, used_margin: {self.used_margin:.2f}")
 
+    def sync_used_margin(self, amount: float) -> None:
+        """
+        Принудительная синхронизация used_margin (reconciliation).
+        Используется при расхождении локальной позиции с биржей.
+        """
+        if amount < 0:
+            amount = 0.0
+        self.used_margin = amount
+        logger.warning(f"Margin synced to: {self.used_margin:.2f}")
+
     def apply_realized_pnl(self, pnl: float) -> None:
         """Применение реализованного PnL — как в MVP bt.py line 163."""
         self.realized_pnl += pnl

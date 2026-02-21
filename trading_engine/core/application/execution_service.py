@@ -61,15 +61,24 @@ class ExecutionService:
             price=entry_price,
         )
 
+        fill_price = fill["fill_price"]
+        fill_qty = float(fill.get("fill_quantity", sizing["quantity"]))
+        if fill_qty <= 0:
+            fill_qty = sizing["quantity"]
+
+        real_notional = fill_qty * fill_price
+        real_margin = real_notional / self.settings.LEVERAGE
+
         # 3. Создаём Position
         position = Position(
             symbol=signal.symbol,
-            entry_price=fill["fill_price"],
+            entry_price=fill_price,
             side=signal.side,
-            notional=sizing["notional"],
-            margin=sizing["margin"],
+            notional=real_notional,
+            margin=real_margin,
             leverage=self.settings.LEVERAGE,
             entry_time=entry_time,
+            quantity=fill_qty,
         )
 
         # 4. Открываем позицию
@@ -78,9 +87,9 @@ class ExecutionService:
         # 5. Уведомление
         await self.notifier.notify(
             f"🚀 OPEN {signal.side.label} {signal.symbol} "
-            f"at {fill['fill_price']:.2f} | "
+            f"at {fill_price:.2f} | "
             f"Sig: {signal.confidence:.2f} MFE: {signal.predicted_mfe * 100:.1f}% | "
-            f"Size: {sizing['notional']:.1f}$ Margin: {sizing['margin']:.1f}$"
+            f"Size: {position.notional:.1f}$ Margin: {position.margin:.1f}$"
         )
 
         return position
@@ -94,10 +103,32 @@ class ExecutionService:
     ) -> Optional[TradeResult]:
         """
         Исполнение выхода:
-        1. PositionManager → close_position (PnL + margin release)
-        2. Notifier → сообщение
+        1. Если есть позиция, кидаем встречный MARKET ордер на биржу.
+        2. PositionManager → close_position с реальным fill_price из ответа биржи.
+        3. Notifier → сообщение.
         """
-        trade_result = self.position_manager.close_position(symbol, exit_price, reason)
+        if not self.position_manager.has_position(symbol):
+            return None
+
+        position = self.position_manager.positions[symbol]
+        
+        # Размещаем встречный ордер на бирже (закрытие)
+        side_str = "SELL" if position.side == Side.LONG else "BUY"
+        try:
+            fill = await self.exchange.place_order(
+                symbol=symbol,
+                side=side_str,
+                quantity=position.quantity,
+                price=exit_price,  # Для MARKET используется как запасной/ориентировочный
+                reduce_only=True,
+            )
+            actual_exit_price = fill["fill_price"]
+        except Exception as e:
+            logger.error(f"Failed to execute exit order on exchange for {symbol}: {e}")
+            # Возврат (или можно сделать retry, но пока fallback к расчетной цене)
+            actual_exit_price = exit_price
+
+        trade_result = self.position_manager.close_position(symbol, actual_exit_price, reason)
         if trade_result is None:
             return None
 

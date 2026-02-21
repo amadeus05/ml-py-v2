@@ -49,6 +49,7 @@ class PaperExchange(IExchange):
         quantity: float,
         price: float,
         order_type: str = "MARKET",
+        reduce_only: bool = False,
     ) -> dict:
         """
         Симуляция ордера: fill по текущей цене + slippage.
@@ -77,6 +78,10 @@ class PaperExchange(IExchange):
 
     async def get_balance(self) -> float:
         return self._balance
+
+    async def get_position_risk(self, symbols: Optional[list[str]] = None) -> list[dict]:
+        """Для paper-режима биржевые позиции не используются."""
+        return []
 
     def set_balance(self, balance: float) -> None:
         """Установить начальный баланс для paper trading."""
