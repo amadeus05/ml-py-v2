@@ -147,19 +147,20 @@ class TradingEngine:
             # === STEP 0: RECONCILE POSITIONS (LIVE SAFETY) ===
             await self._reconcile_positions_if_needed()
 
-            # === STEP 1: CHECK EXIT (SL/TP) ===
+            # === STEP 1: CHECK EXIT (SL/TP) — только для backtest ===
             if self.position_manager.has_position(symbol):
-                exit_result = self.position_manager.check_exit(
-                    symbol, next_open, next_high, next_low
-                )
-                if exit_result:
-                    exit_price, reason = exit_result
-                    trade_result = await self.execution_service.execute_exit(
-                        symbol, exit_price, reason, exit_time=next_ts
+                if self.settings.EXCHANGE_MODE == "simulation":
+                    exit_result = self.position_manager.check_exit(
+                        symbol, next_open, next_high, next_low
                     )
-                    if trade_result:
-                        self.trade_results.append(trade_result)
-                        return trade_result
+                    if exit_result:
+                        exit_price, reason = exit_result
+                        trade_result = await self.execution_service.execute_exit(
+                            symbol, exit_price, reason, exit_time=next_ts
+                        )
+                        if trade_result:
+                            self.trade_results.append(trade_result)
+                            return trade_result
                 # Если позиция открыта но не вышли — не входим повторно
                 return None
 

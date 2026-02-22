@@ -84,6 +84,10 @@ class ExecutionService:
         # 4. Открываем позицию
         self.position_manager.open_position(signal.symbol, position)
 
+        # 4.5. Защитные ордера SL/TP (только live/paper)
+        if self.settings.EXCHANGE_MODE in ("binance", "bybit", "paper"):
+            await self._place_protective_orders(position)
+
         # 5. Уведомление
         await self.notifier.notify(
             f"🚀 OPEN {signal.side.label} {signal.symbol} "
@@ -93,6 +97,46 @@ class ExecutionService:
         )
 
         return position
+
+    async def _place_protective_orders(self, position: Position) -> None:
+        """Выставить SL/TP ордера сразу после входа."""
+        entry_price = position.entry_price
+        sl_pct = self.settings.SL_PCT
+        tp_pct = self.settings.TP_PCT
+
+        if position.side == Side.LONG:
+            stop_price = entry_price * (1 - sl_pct)
+            take_price = entry_price * (1 + tp_pct)
+            exit_side = "SELL"
+        else:
+            stop_price = entry_price * (1 + sl_pct)
+            take_price = entry_price * (1 - tp_pct)
+            exit_side = "BUY"
+
+        try:
+            await self.exchange.place_order(
+                symbol=position.symbol,
+                side=exit_side,
+                quantity=position.quantity,
+                price=stop_price,
+                order_type="STOP_MARKET",
+                reduce_only=True,
+                stop_price=stop_price,
+            )
+            await self.exchange.place_order(
+                symbol=position.symbol,
+                side=exit_side,
+                quantity=position.quantity,
+                price=take_price,
+                order_type="TAKE_PROFIT_MARKET",
+                reduce_only=True,
+                stop_price=take_price,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to place SL/TP orders for {position.symbol}: {e}",
+                exc_info=True,
+            )
 
     async def execute_exit(
         self,

@@ -66,6 +66,9 @@ class SimulationExchange(IExchange):
         price: float,
         order_type: str = "MARKET",
         reduce_only: bool = False,
+        stop_price: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None,
     ) -> dict:
         """
         Симуляция fill.

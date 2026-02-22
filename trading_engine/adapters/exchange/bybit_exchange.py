@@ -333,6 +333,9 @@ class BybitExchange(IExchange):
         price: float,
         order_type: str = "MARKET",
         reduce_only: bool = False,
+        stop_price: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Размещение ордера через Bybit V5 Trade API.
@@ -373,7 +376,10 @@ class BybitExchange(IExchange):
 
         # Bybit V5 side: "Buy" / "Sell" (capitalized)
         bybit_side = side.capitalize() if side.upper() in ("BUY", "SELL") else side
-        bybit_order_type = "Market" if order_type.upper() == "MARKET" else "Limit"
+        order_type_upper = order_type.upper()
+        is_trigger_order = order_type_upper in ("STOP_MARKET", "TAKE_PROFIT_MARKET")
+        bybit_order_type = "Market" if order_type_upper == "MARKET" or is_trigger_order else "Limit"
+        trigger_price = stop_price if stop_price is not None else price
 
         timestamp = await self._get_sys_time()
 
@@ -390,6 +396,20 @@ class BybitExchange(IExchange):
 
         if reduce_only:
             body["reduceOnly"] = True
+        if is_trigger_order:
+            body["triggerPrice"] = f"{trigger_price:.6f}"
+            body["triggerBy"] = "LastPrice"
+            if order_type_upper == "STOP_MARKET":
+                body["stopLoss"] = f"{trigger_price:.6f}"
+                body["triggerDirection"] = 2 if bybit_side == "Sell" else 1
+            else:
+                body["takeProfit"] = f"{trigger_price:.6f}"
+                body["triggerDirection"] = 1 if bybit_side == "Sell" else 2
+        else:
+            if take_profit is not None:
+                body["takeProfit"] = f"{take_profit:.6f}"
+            if stop_loss is not None:
+                body["stopLoss"] = f"{stop_loss:.6f}"
         body_str = _json.dumps(body, separators=(",", ":"))
         headers = self._auth_headers(timestamp, body_str)
 

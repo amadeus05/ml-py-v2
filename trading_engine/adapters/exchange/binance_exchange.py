@@ -274,6 +274,9 @@ class BinanceExchange(IExchange):
         price: float,
         order_type: str = "MARKET",
         reduce_only: bool = False,
+        stop_price: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Размещение ордера через Binance Futures API.
@@ -286,6 +289,9 @@ class BinanceExchange(IExchange):
         api_symbol = symbol.replace("/", "")
 
         sym_info = self.symbols_info.get(api_symbol)
+        order_type_upper = order_type.upper()
+        is_trigger_order = order_type_upper in ("STOP_MARKET", "TAKE_PROFIT_MARKET")
+        trigger_price = stop_price if stop_price is not None else price
         qty_str = f"{quantity:.6f}"
 
         if sym_info:
@@ -300,12 +306,15 @@ class BinanceExchange(IExchange):
                 qty_str = f"{quantity:.{qty_precision}f}"
                 
             if tick_size > 0:
-                price = round(price / tick_size) * tick_size
+                if is_trigger_order:
+                    trigger_price = round(trigger_price / tick_size) * tick_size
+                else:
+                    price = round(price / tick_size) * tick_size
                 
             if quantity <= 0 or quantity < min_qty:
                 raise ValueError(f"Quantity {quantity} is less than minQty {min_qty} for {symbol}")
                 
-            notional = quantity * price
+            notional = quantity * (trigger_price if is_trigger_order else price)
             if min_notional > 0 and notional < min_notional:
                 logger.warning(
                     f"Notional {notional} is less than minNotional {min_notional} for {symbol}. "
@@ -328,6 +337,8 @@ class BinanceExchange(IExchange):
 
         if reduce_only:
             params["reduceOnly"] = "true"
+        if is_trigger_order:
+            params["stopPrice"] = f"{trigger_price:.6f}"
 
         signed_params = self._sign_params(params)
 
@@ -374,7 +385,7 @@ class BinanceExchange(IExchange):
                 fill_price = price
 
         if fill_price == 0.0:
-            fill_price = price
+            fill_price = price if not is_trigger_order else trigger_price
 
         return {
             "fill_price": fill_price,

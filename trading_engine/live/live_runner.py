@@ -1,9 +1,8 @@
 """
 LiveRunner — WebSocket-based live/paper trading loop.
 
-Two parallel streams per symbol:
+Single stream per symbol:
   1. Main timeframe (e.g. 1h) — on candle close → ML analysis + entry
-  2. 1-minute klines — real-time SL/TP monitoring for open positions
 
 Uses aiohttp for WebSocket connections to Binance Futures.
 """
@@ -33,7 +32,6 @@ class LiveRunner:
         1. Fetch initial candle history (REST) for feature warmup
         2. Connect to WebSocket kline streams:
            - Main TF: candle close → features → ML predict → entry
-           - 1m: candle close → SL/TP check for open positions
         3. Run until shutdown signal (Ctrl+C)
     """
 
@@ -67,7 +65,7 @@ class LiveRunner:
         logger.info(f"  Mode: {self.settings.EXCHANGE_MODE}")
         logger.info(f"  Symbols: {self.settings.SYMBOLS}")
         logger.info(f"  Main TF: {self.settings.TIMEFRAME}")
-        logger.info(f"  SL/TP monitor: 1m klines")
+        logger.info("  SL/TP monitor: exchange-side orders")
         logger.info("=" * 60)
 
         # Register shutdown signals
@@ -85,14 +83,19 @@ class LiveRunner:
             # Step 1: Load initial history for feature computation
             await self._load_all_history()
 
-            # Step 2: Notify start
+            # Step 2: Reconcile positions with exchange
+            await self._reconcile_positions(label="startup")
+
+            # Step 3: Notify start
+            open_pos = list(self.position_manager.positions.keys())
             await self.notifier.notify(
                 f"🤖 Bot started in {self.settings.EXCHANGE_MODE} mode\n"
                 f"Symbols: {', '.join(self.settings.SYMBOLS)}\n"
-                f"TF: {self.settings.TIMEFRAME} | SL/TP on 1m"
+                f"TF: {self.settings.TIMEFRAME} | SL/TP on exchange\n"
+                f"Open positions: {open_pos if open_pos else 'none'}"
             )
 
-            # Step 3: Launch WS streams for each symbol
+            # Step 4: Launch WS streams for each symbol
             for symbol in self.settings.SYMBOLS:
                 ws_symbol = symbol.replace("/", "").lower()
 
@@ -109,20 +112,15 @@ class LiveRunner:
                 )
                 self._ws_tasks.append(task_main)
 
-                # 1-minute SL/TP monitoring stream
-                task_tick = asyncio.create_task(
-                    self._ws_kline_loop(
-                        symbol=symbol,
-                        ws_symbol=ws_symbol,
-                        interval="1m",
-                        handler=self._on_tick_candle,
-                        stream_name=f"{symbol} 1m-tick",
-                    ),
-                    name=f"ws-tick-{symbol}",
+            # Step 5: Launch periodic reconciliation
+            if self.settings.RECONCILE_ENABLED:
+                reconcile_task = asyncio.create_task(
+                    self._periodic_reconcile_loop(),
+                    name="periodic-reconcile",
                 )
-                self._ws_tasks.append(task_tick)
+                self._ws_tasks.append(reconcile_task)
 
-            # Step 4: Wait for shutdown
+            # Step 6: Wait for shutdown
             logger.info("All WebSocket streams launched. Waiting for signals...")
             await self._shutdown_event.wait()
 
@@ -232,8 +230,7 @@ class LiveRunner:
 
         # В Live режиме:
         # 1. Свеча уже закрыта, поэтому next_open для engine это цена закрытия текущей свечи (current_close).
-        # 2. next_high/next_low передаем как current_close, потому что мониторинг SL/TP внутри свечи 
-        #    делается через 1m тики (_on_tick_candle). Основной TF используется только для генерации сигнала и входа.
+        # 2. next_high/next_low передаем как current_close — SL/TP контролируются биржей.
         
         trade_result = await self.engine.on_candle(
             symbol=symbol,
@@ -251,40 +248,109 @@ class LiveRunner:
                 f"PnL: {trade_result.net_pnl_pct * 100:.2f}%"
             )
 
+        if hasattr(self.exchange, "process_candle"):
+            try:
+                self.exchange.process_candle(
+                    symbol=symbol,
+                    open_=new_candle["open"],
+                    high=new_candle["high"],
+                    low=new_candle["low"],
+                    close=new_candle["close"],
+                )
+            except Exception as e:
+                logger.warning(f"[{symbol}] Failed to process candle in exchange: {e}")
+
     # ──────────────────────────────────────────────
-    # Handler: 1-Minute Tick for SL/TP Monitoring
+    # Reconciliation
     # ──────────────────────────────────────────────
-    async def _on_tick_candle(self, symbol: str, kline: dict) -> None:
+    async def _reconcile_positions(self, label: str = "periodic") -> None:
         """
-        Called every 1 minute. Checks SL/TP for open positions.
-        Fast exit monitoring — up to 60x faster than main TF.
+        Fetch open positions & balance from exchange and sync local state.
+        Safe to call at startup and periodically.
         """
-        if not self.position_manager.has_position(symbol):
-            return
-
-        candle = self._parse_kline(kline)
-
-        exit_result = self.position_manager.check_exit(
-            symbol,
-            next_open=candle["open"],
-            next_high=candle["high"],
-            next_low=candle["low"],
-        )
-
-        if exit_result is None:
-            return
-
-        exit_price, reason = exit_result
-        trade_result = await self.execution_service.execute_exit(
-            symbol, exit_price, reason, exit_time=candle["timestamp"],
-        )
-
-        if trade_result:
-            self.engine.trade_results.append(trade_result)
-            logger.info(
-                f"[{symbol}] ⚡ 1m EXIT ({reason}) at {exit_price:.2f} | "
-                f"PnL: {trade_result.net_pnl_pct * 100:.2f}%"
+        try:
+            # 1. Get exchange positions
+            raw_positions = await self.exchange.get_position_risk(
+                symbols=self.settings.SYMBOLS
             )
+
+            # 2. Convert API symbols → local symbols and build dict
+            exchange_positions: dict[str, dict] = {}
+            for pos in raw_positions:
+                api_sym = pos.get("symbol", "")
+                local_sym = self._api_symbol_to_local(api_sym)
+                qty = pos.get("quantity", 0.0)
+                if abs(qty) <= self.settings.RECONCILE_QTY_TOLERANCE:
+                    continue
+                exchange_positions[local_sym] = {
+                    "quantity": qty,
+                    "entry_price": pos.get("entry_price", 0.0),
+                    "leverage": pos.get("leverage", self.settings.LEVERAGE),
+                    "mark_price": pos.get("mark_price", 0.0),
+                }
+
+            # 3. Reconcile local positions
+            changes = self.position_manager.reconcile_with_exchange(
+                exchange_positions,
+                qty_tolerance=self.settings.RECONCILE_QTY_TOLERANCE,
+            )
+
+            # 4. Sync balance from exchange
+            exchange_balance = await self.exchange.get_balance()
+            if exchange_balance > 0:
+                old_balance = self.container.portfolio.balance
+                self.container.portfolio.balance = exchange_balance
+                if abs(old_balance - exchange_balance) > 0.01:
+                    logger.info(
+                        f"[reconcile:{label}] Balance synced: "
+                        f"{old_balance:.2f} → {exchange_balance:.2f}"
+                    )
+
+            # 5. Log results
+            if changes["created"] or changes["updated"] or changes["closed"]:
+                logger.warning(
+                    f"[reconcile:{label}] Changes: "
+                    f"created={changes['created']}, "
+                    f"updated={changes['updated']}, "
+                    f"closed={changes['closed']}"
+                )
+            else:
+                logger.info(f"[reconcile:{label}] Positions in sync ✓")
+
+        except Exception as e:
+            logger.error(
+                f"[reconcile:{label}] Failed: {e}", exc_info=True
+            )
+
+    async def _periodic_reconcile_loop(self) -> None:
+        """Background loop: reconcile every RECONCILE_INTERVAL_SEC seconds."""
+        interval = self.settings.RECONCILE_INTERVAL_SEC
+        logger.info(f"Periodic reconciliation started (every {interval}s)")
+
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(), timeout=interval
+                )
+                # If we get here, shutdown was requested
+                break
+            except asyncio.TimeoutError:
+                # Timeout = interval elapsed, time to reconcile
+                await self._reconcile_positions(label="periodic")
+
+        logger.info("Periodic reconciliation stopped")
+
+    @staticmethod
+    def _api_symbol_to_local(api_symbol: str) -> str:
+        """
+        Convert API symbol format to local format.
+        ETHUSDT → ETH/USDT, BTCUSDT → BTC/USDT
+        """
+        for quote in ("USDT", "BUSD", "USDC"):
+            if api_symbol.endswith(quote):
+                base = api_symbol[: -len(quote)]
+                return f"{base}/{quote}"
+        return api_symbol
 
     # ──────────────────────────────────────────────
     # Initial History Loading
