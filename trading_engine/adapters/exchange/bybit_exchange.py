@@ -4,6 +4,7 @@ import hmac
 import logging
 import time
 import math
+import urllib.parse
 from datetime import datetime
 from typing import Optional
 
@@ -449,7 +450,6 @@ class BybitExchange(IExchange):
                     "symbol": api_symbol,
                     "orderId": exchange_order_id,
                 }
-                import urllib.parse
                 query_string = urllib.parse.urlencode(query_params)
                 query_headers = self._auth_headers(query_ts, query_string)
 
@@ -489,7 +489,6 @@ class BybitExchange(IExchange):
             raise ValueError("Bybit API key/secret are required for live trading.")
 
         timestamp = await self._get_sys_time()
-        import urllib.parse
         params = {"accountType": "UNIFIED", "coin": "USDT"}
         query_string = urllib.parse.urlencode(params)
         headers = self._auth_headers(timestamp, query_string)
@@ -525,7 +524,6 @@ class BybitExchange(IExchange):
             raise ValueError("Bybit API key/secret are required for live trading.")
 
         timestamp = await self._get_sys_time()
-        import urllib.parse
         params = {"category": "linear", "settleCoin": "USDT"}
         query_string = urllib.parse.urlencode(params)
         headers = self._auth_headers(timestamp, query_string)
