@@ -2,4 +2,22 @@ storage/
 *.pkl
 *.db
 *.log
+
+*models
+
+*trading_engine/adapters/api/*
+*.md
+*.txt
+
+# Скомпилированные файлы Python и кэш
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Скомпилированные файлы Python
+*.pyc
+*.pyo
+*.pyd
+
+venv/
 .env
